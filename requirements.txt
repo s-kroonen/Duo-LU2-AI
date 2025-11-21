@@ -4,4 +4,3 @@ numpy
 gensim
 scikit-learn
 nltk
-re
