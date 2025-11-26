@@ -4,3 +4,5 @@ numpy
 gensim
 scikit-learn
 nltk
+matplotlib
+seaborn
