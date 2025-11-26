@@ -1,31 +1,27 @@
 import pandas as pd
 import numpy as np
 import re
+
+# Laad de dataset
 df = pd.read_csv("Uitgebreide_VKM_dataset.csv")
-df.head()
 
-# Hulpfuncties en variabelen
+# ==========================================
+# CONFIGURATIE
+# ==========================================
 
-empty_values = [
-    "",           # lege strings
-    "nan",        # NaN nadat alles string is
-    "none",
-    "null"
-]
+empty_values = ["", "nan", "none", "null"]
 
 weird_values = [
-    "nvt",
-    "volgt", 
-    "ntb",
-    "nader te bepalen",
-    "nog niet bekend",
-    "nadert te bepalen",
-    "nog te formuleren",
-    "tbd",
-    "n.n.b.",
-    "nog niet bekend",
-    "navragen"
+    "nvt", "volgt", "ntb", "nader te bepalen", "nog niet bekend",
+    "nadert te bepalen", "nog te formuleren", "tbd", "n.n.b.", "navragen"
 ]
+
+# Kolommen die we NIET als tekst willen behandelen (optioneel, voor veiligheid)
+numeric_cols = ["id", "studycredit", "available_spots", "interests_match_score", "popularity_score"]
+
+# ==========================================
+# HULPFUNCTIES
+# ==========================================
 
 def is_empty(value):
     """Checkt of waarde leeg, null of whitespace is."""
@@ -46,7 +42,7 @@ def is_ntb(value):
     """Checkt of waarde 'ntb' is."""
     return isinstance(value, str) and value.strip().lower() == "ntb"
 
-def analyzedataframe(df):
+def analyze_dataframe(df):
     analysis = []
 
     for col in df.columns:
@@ -84,76 +80,89 @@ def analyzedataframe(df):
     analysis_df = analysis_df.sort_values(by="general_error_%", ascending=False)
     return analysis_df
 
+print("\nAnalyse voor opschoning:")
+print(analyze_dataframe(df))
+# ==========================================
+# STAP 1: BASIS OPSCHONING
+# ==========================================
 
-# Stap 0 — korte analyse van lege velden en "ntb"
+# Verwijder de kleurenkolommen direct
+cols_to_drop = ["Rood", "Groen", "Blauw", "Geel"]
+df = df.drop(columns=[c for c in cols_to_drop if c in df.columns])
 
-print(analyzedataframe(df))
-
-
-# Stap 1 — alles naar string voor consistente verwerking
+# Zet alles naar string, behalve als het puur numeriek moet blijven? 
+# Voor TF-IDF is alles naar string prima.
 df = df.astype(str)
 
-# Stap 2 — passing op alle kolommen: strip en lowercase
-# Lowercase-versie voor matching
-df_lower = df.apply(lambda col: col.str.lower().str.strip())
+# Lowercase en strip whitespace
 df = df.apply(lambda col: col.str.lower().str.strip())
-# Verwijder de onzinnige kleurkolommen
-df = df.drop(columns=["Rood","Groen","Blauw","Geel"])
 
-# Stap 3 — vervang ALLES wat in weird_values zit door "ntb"
-pattern = "|".join([re.escape(v) for v in weird_values])
+# Zet letterlijke strings "nan", "none" om naar "ntb"
+for val in empty_values:
+    df.replace(val, "ntb", inplace=True)
 
-# masker dat True is als een waarde in een van de kolommen weird is
-mask = df.apply(lambda col: col.astype(str).str.contains(pattern, case=False, na=False)).any(axis=1)
+# ==========================================
+# STAP 2: VEILIGE REPLACEMENT (FIX)
+# ==========================================
+
+# We gebruiken regex boundaries \b zodat "volgt" alleen wordt vervangen als het een los woord is,
+# en niet als onderdeel van een ander woord (hoewel 'volgt' in een zin nog steeds riskant is).
+# BETER: We vervangen alleen als de CEL bijna volledig uit deze term bestaat.
+
+# Regex: ^ = begin cel, \s* = spaties, (lijst), \s* = spaties, $ = einde cel
+# Dit vervangt dus alleen "  nog niet bekend  ", maar laat "De les volgt later" met rust.
+safe_pattern = r'^\s*(' + '|'.join([re.escape(v) for v in weird_values]) + r')\s*$'
 
 for col in df.columns:
-    df[col] = df[col].astype(str).str.replace(pattern, "ntb", regex=True)
+    # Vervang exacte matches van weird values door 'ntb'
+    df[col] = df[col].replace(to_replace=safe_pattern, value="ntb", regex=True)
 
+# ==========================================
+# STAP 3: INTELLIGENT VULLEN (FIX)
+# ==========================================
 
-# Stap 4 — extra: lege velden of whitespace → NTB
-# df = df.apply(lambda col: col.str.strip().replace("", "ntb"))
-for value in empty_values:
-    df[df_lower == value] = "ntb"
+def fill_short_smart(row):
+    short = row.get("shortdescription", "ntb")
+    
+    # Als shortdescription goed is, niks doen
+    if short != "ntb" and short != "":
+        return short
 
-# Stap 5 Schoonmaken en vullen van lege kolommen
-def fill_short(row):
-    short = str(row.get("shortdescription", "")).strip().lower()
+    # Haal backup velden op
+    desc = row.get("description", "ntb")
+    content = row.get("content", "ntb")
+    
+    valid_desc = desc != "ntb" and desc != ""
+    valid_content = content != "ntb" and content != ""
 
-    # Alleen aanvullen als shortdescription == "ntb"
-    if short != "ntb":
-        return row["shortdescription"]
-
-    # Description en content ophalen
-    desc = str(row.get("description", "")).strip()
-    content = str(row.get("content", "")).strip()
-
-    # Check of ze bruikbaar zijn (niet "ntb" en niet leeg/None)
-    valid_desc = desc.lower() != "ntb"
-    valid_content = content.lower() != "ntb" 
-
-    # Case 1 — beide bruikbaar → combineer
+    # Scenario 1: Beide zijn bruikbaar
     if valid_desc and valid_content:
-        return f"{desc} {content}".strip()
+        # CHECK: Als ze exact hetzelfde zijn (komt vaak voor in jouw dataset), pak er maar 1
+        if desc == content:
+            return desc
+        # Anders samenvoegen
+        return f"{desc} {content}"
 
-    # Case 2 — alleen description bruikbaar
+    # Scenario 2: Alleen description
     if valid_desc:
         return desc
 
-    # Case 3 — alleen content bruikbaar
+    # Scenario 3: Alleen content
     if valid_content:
         return content
 
-    # Case 4 — beide nutteloos → short blijft ntb
     return "ntb"
 
+print("Bezig met 'shortdescription' herstellen...")
+df["shortdescription"] = df.apply(fill_short_smart, axis=1)
 
-df["shortdescription"] = df.apply(fill_short, axis=1)
+# ==========================================
+# STAP 4: ANALYSE & OPSLAAN
+# ==========================================
 
+print("\nAnalyse na opschoning:")
+print(analyze_dataframe(df))
 
-# Stap 6 — korte analyse van lege velden en "ntb" na opschoning
-print(analyzedataframe(df))
-
-
-
-df.to_csv("Uitgebreide_VKM_dataset_zonder_weird_data.csv", index=False)
-print("Opschoning voltooid. Opgeslagen als 'Uitgebreide_VKM_dataset_zonder_weird_data.csv'")
+output_file = "Uitgebreide_VKM_dataset_zonder_weird_data.csv"
+df.to_csv(output_file, index=False)
+print(f"\nKlaar! Opgeslagen als '{output_file}'")

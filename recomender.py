@@ -1,17 +1,21 @@
 import pandas as pd
 import re
-from sklearn.feature_extraction.text import CountVectorizer
+# CHANGE 1: Import TfidfVectorizer instead of CountVectorizer
+from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
 import nltk
 from nltk.corpus import stopwords
 from nltk.stem import WordNetLemmatizer, SnowballStemmer
 
-
 nltk.download("stopwords")
 nltk.download("wordnet")
 
-# Stopwoorden NL + ENG
+# ===============================
+# PREPROCESSING SETUP
+# ===============================
+
+# Stopwoorden NL + ENG (Initial set for the cleaning function)
 stop_words = set(stopwords.words("english")) | set(stopwords.words("dutch"))
 
 # Lemmatizer voor Engels
@@ -20,6 +24,7 @@ lemmatizer_en = WordNetLemmatizer()
 # Stemmer voor Nederlands
 stemmer_nl = SnowballStemmer("dutch")
 
+# Load Data
 df = pd.read_csv("Uitgebreide_VKM_dataset_zonder_weird_data.csv")
 
 def detect_language(text):
@@ -34,7 +39,6 @@ def detect_language(text):
     return "nl" if nl_score >= en_score else "en"
 
 def clean_text_nlp(text):
-
     if not isinstance(text, str) or text.strip() == "" or text.lower() in ["ntb", "tbd", "nader te bepalen"]:
         return "ntb"
     
@@ -65,9 +69,10 @@ def clean_text_nlp(text):
 
 
 # ===============================
-# APPLY TO SHORTDESCRIPTION
+# APPLY CLEANING
 # ===============================
 
+print("Cleaning text data...")
 df["shortdescription"] = df["shortdescription"].apply(clean_text_nlp)
 df["description"] = df["description"].apply(clean_text_nlp)
 
@@ -81,27 +86,50 @@ df["combined_text"] = (
     df["module_tags"].astype(str) + " " +
     df["location"].astype(str)
 )
+
+# ===============================
+# TF-IDF VECTORIZATION
+# ===============================
+
+# Re-defining stopwords list for the vectorizer (optional redundancy, but safe)
 stopwords_nl = stopwords.words("dutch")
 stopwords_en = stopwords.words("english")
+combined_stopwords = list(set(stopwords_nl + stopwords_en))
 
-combined_stopwords = set(stopwords_nl + stopwords_en)
-print("Stopwoorden gecombineerd:", combined_stopwords)
-vectorizer = CountVectorizer(stop_words=list(combined_stopwords))
+print(f"Start Vectorization with TF-IDF...")
+
+# CHANGE 2: Use TfidfVectorizer
+# You can tune min_df (ignore terms that appear in too few docs) 
+# and max_df (ignore terms that appear in too many docs)
+vectorizer = TfidfVectorizer(
+    stop_words=combined_stopwords,
+    min_df=1  # Optional: ignore words that only appear in 1 document
+)
+
 vectorized = vectorizer.fit_transform(df["combined_text"])
 
+print(f"Matrix shape: {vectorized.shape}")
+
+# Calculate Similarity
 similarities = cosine_similarity(vectorized)
 similarity_df = pd.DataFrame(similarities, index=df["name"], columns=df["name"])
 print("Similariteit matrix gemaakt.")
-print(similarity_df.head())
+
+# ===============================
+# RECOMMENDATION FUNCTION
+# ===============================
 
 def recommend(module_name, similarity_df):
     try:
+        # Sort descending to find highest similarity
         recs = similarity_df[module_name].sort_values(ascending=False)[1:6]
-        print(f"Aanbevolen modules voor '{module_name}':")
-        print(recs)
+        print(f"\nAanbevolen modules voor '{module_name}':")
+        for name, score in recs.items():
+            print(f"- {name} (Score: {score:.2f})")
     except KeyError:
-        print("Module niet gevonden in dataset.")
-        print("Beschikbare modules zijn:")
-        print(similarity_df.index.tolist())
+        print("\nModule niet gevonden in dataset.")
+        print("Beschikbare modules (eerste 5):")
+        print(similarity_df.index.tolist()[:5])
 
+# Test
 recommend("datagedreven besluitvorming met ai", similarity_df)
