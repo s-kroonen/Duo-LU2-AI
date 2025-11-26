@@ -1,7 +1,14 @@
 import pandas as pd
 import numpy as np
 import re
+import nltk
+from nltk.corpus import stopwords
 
+try:
+    nltk.data.find('corpora/stopwords')
+except LookupError:
+    nltk.download('stopwords')
+    
 # Laad de dataset
 df = pd.read_csv("Uitgebreide_VKM_dataset.csv")
 
@@ -18,6 +25,12 @@ weird_values = [
 
 # Kolommen die we NIET als tekst willen behandelen (optioneel, voor veiligheid)
 numeric_cols = ["id", "studycredit", "available_spots", "interests_match_score", "popularity_score"]
+
+# Setup Stopwords voor Tags (Dutch + English)
+stop_words = set(stopwords.words('english')) | set(stopwords.words('dutch'))
+# Voeg extra ruiswoorden toe
+extra_noise = {"ntb", "nan", "null", "none", "'", "['", "']"} 
+stop_words.update(extra_noise)
 
 # ==========================================
 # HULPFUNCTIES
@@ -117,6 +130,30 @@ for col in df.columns:
     # Vervang exacte matches van weird values door 'ntb'
     df[col] = df[col].replace(to_replace=safe_pattern, value="ntb", regex=True)
 
+# Specific Tag Cleaning (Stopword Removal) ---
+def clean_tags_column(tag_string):
+    if tag_string == 'ntb': return 'ntb'
+    
+    # 1. Remove list characters like [ ] ' "
+    clean_str = re.sub(r"[\[\]'\"]", "", tag_string)
+    
+    # 2. Split by comma
+    tags = clean_str.split(',')
+    
+    valid_tags = []
+    for tag in tags:
+        tag = tag.strip().lower()
+        # 3. Filter: Must not be a stopword, must be > 1 char, must not be numeric
+        if tag and tag not in stop_words and len(tag) > 1 and not tag.isdigit():
+            valid_tags.append(tag)
+            
+    # Return as a clean comma-separated string (easier for reading) 
+    # or keep as list string if preferred. Here we join them.
+    return ", ".join(valid_tags) if valid_tags else "ntb"
+
+print("Removing stopwords from module_tags...")
+df['module_tags'] = df['module_tags'].apply(clean_tags_column)
+
 # ==========================================
 # STAP 3: INTELLIGENT VULLEN (FIX)
 # ==========================================
@@ -155,6 +192,8 @@ def fill_short_smart(row):
 
 print("Bezig met 'shortdescription' herstellen...")
 df["shortdescription"] = df.apply(fill_short_smart, axis=1)
+
+
 
 # ==========================================
 # STAP 4: ANALYSE & OPSLAAN
