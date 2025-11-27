@@ -1,11 +1,7 @@
 pandas 
-openpyxl
 numpy
-gensim
-scikit-learn
-nltk
 matplotlib
 seaborn
-transformers
-sentencepiece
-sacremoses
+nltk
+scikit-learn
+langdetect
