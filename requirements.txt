@@ -6,3 +6,6 @@ scikit-learn
 nltk
 matplotlib
 seaborn
+transformers
+sentencepiece
+sacremoses
